@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -30,14 +31,14 @@ jobs:
         run: |
           set -e
 
-          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1 || true)
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: Android project ZIP not found."
+            echo "ERROR: Project ZIP not found."
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP"
+          echo "Using ZIP: $ZIP"
 
           rm -rf android_project
           mkdir -p android_project
@@ -57,23 +58,51 @@ jobs:
 
           if [ -z "$SETTINGS" ]; then
             echo "ERROR: settings.gradle was not found."
-            find android_project -maxdepth 6 -type f | sort | head -200
+
+            echo "Files found:"
+            find android_project -maxdepth 7 -type f | sort | head -200
+
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project:"
+          echo "Android project found:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Find Android app module
+        shell: bash
+        run: |
+          set -e
+
+          APP_DIR=$(find "$PROJECT_DIR" -type f \
+            -name "AndroidManifest.xml" \
+            | head -n 1 | xargs -r dirname)
+
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: AndroidManifest.xml not found."
+
+            find "$PROJECT_DIR" -maxdepth 8 -type f | sort | head -300
+
+            exit 1
+          fi
+
+          APP_DIR=$(dirname "$(dirname "$APP_DIR")")
+
+          echo "Android app module:"
+          echo "$APP_DIR"
+
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
       - name: Install MMTJS logo
         shell: bash
         run: |
           set -e
 
-          LOGO=$(find . -type f -name "mmtjs_logo.png" \
+          LOGO=$(find . -type f \
+            -name "mmtjs_logo.png" \
             -not -path "./.git/*" \
             | head -n 1 || true)
 
@@ -82,21 +111,22 @@ jobs:
             exit 1
           fi
 
-          echo "Logo found: $LOGO"
+          echo "Logo found:"
+          echo "$LOGO"
 
-          mkdir -p "$PROJECT_DIR/app/src/main/res/drawable"
+          mkdir -p "$APP_DIR/src/main/res/drawable"
 
           cp "$LOGO" \
-             "$PROJECT_DIR/app/src/main/res/drawable/mmtjs_logo.png"
+            "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
 
-          echo "Logo copied into Android project."
+          echo "Logo copied into app."
 
       - name: Create launcher icon
         shell: bash
         run: |
           set -e
 
-          RES="$PROJECT_DIR/app/src/main/res"
+          RES="$APP_DIR/src/main/res"
 
           mkdir -p "$RES/mipmap-mdpi"
           mkdir -p "$RES/mipmap-hdpi"
@@ -112,22 +142,21 @@ jobs:
             mipmap-xxxhdpi
           do
             cp "$RES/drawable/mmtjs_logo.png" \
-               "$RES/$DIR/ic_launcher.png"
+              "$RES/$DIR/ic_launcher.png"
           done
 
-          echo "Launcher icon created."
+          echo "Launcher icons created."
 
       - name: Configure launcher icon
         shell: bash
         run: |
           set -e
 
-          MANIFEST=$(find "$PROJECT_DIR" -type f \
-            -name "AndroidManifest.xml" | head -n 1 || true)
+          MANIFEST="$APP_DIR/src/main/AndroidManifest.xml"
 
-          if [ -z "$MANIFEST" ]; then
-            echo "WARNING: AndroidManifest.xml not found."
-            echo "Continuing without changing manifest."
+          if [ ! -f "$MANIFEST" ]; then
+            echo "WARNING: Manifest not found at:"
+            echo "$MANIFEST"
             exit 0
           fi
 
@@ -136,8 +165,8 @@ jobs:
           import re
           import sys
 
-          p = Path(sys.argv[1])
-          text = p.read_text()
+          manifest = Path(sys.argv[1])
+          text = manifest.read_text()
 
           if "android:icon=" in text:
               text = re.sub(
@@ -153,7 +182,7 @@ jobs:
                   1
               )
 
-          p.write_text(text)
+          manifest.write_text(text)
 
           print("Launcher icon configured.")
           PY
@@ -163,31 +192,63 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build APK
+      - name: Check Gradle
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          gradle assembleDebug --stacktrace
+          gradle --version
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -o pipefail
+
+          gradle assembleDebug --stacktrace --info 2>&1 | tee build.log
+
+      - name: Show actual build error
+        if: failure()
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "       ACTUAL BUILD ERROR"
+          echo "========================================"
+
+          grep -A 30 -B 10 \
+            -E "What went wrong|Caused by:|FAILURE:" \
+            build.log || true
+
+          echo ""
+          echo "========================================"
+          echo "       LAST 100 LINES"
+          echo "========================================"
+
+          tail -n 100 build.log || true
 
       - name: Find APK
+        if: success()
         shell: bash
         run: |
           set -e
 
           APK=$(find "$PROJECT_DIR" -type f \
             -name "*.apk" \
-            -path "*/build/outputs/*" | head -n 1 || true)
+            -path "*/build/outputs/*" \
+            | head -n 1 || true)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not created."
             exit 1
           fi
 
-          echo "APK created:"
+          echo "APK found:"
           echo "$APK"
 
           echo "APK=$APK" >> "$GITHUB_ENV"
 
       - name: Upload MMTJS APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MMTJS-debug-apk
