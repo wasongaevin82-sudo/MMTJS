@@ -14,99 +14,77 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Set Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
-      - name: Find and install MMTJS logo
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --version
+          yes | sdkmanager --licenses || true
+
+      - name: Find MMTJS logo
         shell: bash
         run: |
           set -e
 
-          echo "Searching for MMTJS logo..."
-
-          LOGO=""
-
-          for file in \
-            "mmtjs_logo.png" \
-            "mmtjs-logo.png" \
-            "MAMA TERTTU Junior School Crest(1).png" \
-            "Mama Terttu Junior School Crest.png"
-          do
-            FOUND=$(find . -type f -iname "$file" | head -n 1 || true)
-            if [ -n "$FOUND" ]; then
-              LOGO="$FOUND"
-              break
-            fi
-          done
+          LOGO=$(find . -type f \( \
+            -iname "mmtjs_logo.png" -o \
+            -iname "mmtjs-logo.png" -o \
+            -iname "MAMA TERTTU Junior School Crest(1).png" -o \
+            -iname "Mama Terttu Junior School Crest.png" \
+          \) | head -n 1 || true)
 
           if [ -z "$LOGO" ]; then
-            echo "ERROR: MMTJS logo was not found in the repository."
-            echo "Please add the TERTTU 3D logo image to the repository."
+            echo "ERROR: MMTJS logo was not found."
+            echo "Add the TERTTU 3D logo image to the repository first."
             exit 1
           fi
 
           echo "Logo found: $LOGO"
 
           mkdir -p app/src/main/res/drawable
+          cp "$LOGO" app/src/main/res/drawable/mmtjs_logo.png
+
+      - name: Configure launcher icon
+        shell: bash
+        run: |
           mkdir -p app/src/main/res/mipmap-hdpi
           mkdir -p app/src/main/res/mipmap-mdpi
           mkdir -p app/src/main/res/mipmap-xhdpi
           mkdir -p app/src/main/res/mipmap-xxhdpi
           mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-          cp "$LOGO" app/src/main/res/drawable/mmtjs_logo.png
+          cp app/src/main/res/drawable/mmtjs_logo.png app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp app/src/main/res/drawable/mmtjs_logo.png app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp app/src/main/res/drawable/mmtjs_logo.png app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp app/src/main/res/drawable/mmtjs_logo.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp app/src/main/res/drawable/mmtjs_logo.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
-          cp "$LOGO" app/src/main/res/mipmap-mdpi/ic_launcher.png
-          cp "$LOGO" app/src/main/res/mipmap-hdpi/ic_launcher.png
-          cp "$LOGO" app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          cp "$LOGO" app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          cp "$LOGO" app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-
-          echo "Logo installed successfully."
-
-      - name: Ensure logo is displayed inside the app
+      - name: Configure Android manifest
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          p = Path("app/src/main/res/layout/activity_main.xml")
-
-          if not p.exists():
-              print("activity_main.xml not found; skipping layout update.")
-              raise SystemExit(0)
-
-          text = p.read_text()
-
-          text = text.replace(
-              'android:src="@drawable/mmtjs_logo"',
-              'android:src="@drawable/mmtjs_logo"'
-          )
-
-          p.write_text(text)
-          print("App logo reference checked.")
-          PY
-
-      - name: Set launcher icon
-        shell: bash
-        run: |
-          MANIFEST="app/src/main/AndroidManifest.xml"
-
-          if [ -f "$MANIFEST" ]; then
-            python3 - <<'PY'
-          from pathlib import Path
+          import re
 
           p = Path("app/src/main/AndroidManifest.xml")
+
+          if not p.exists():
+              print("AndroidManifest.xml not found")
+              raise SystemExit(1)
+
           text = p.read_text()
 
-          if 'android:icon=' in text:
-              import re
+          if "android:icon=" in text:
               text = re.sub(
                   r'android:icon="[^"]*"',
                   'android:icon="@mipmap/ic_launcher"',
@@ -115,20 +93,19 @@ jobs:
               )
           else:
               text = text.replace(
-                  '<application',
+                  "<application",
                   '<application android:icon="@mipmap/ic_launcher"',
                   1
               )
 
           p.write_text(text)
-          print("Launcher icon configured.")
+          print("Launcher icon configured successfully.")
           PY
-          fi
 
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build debug APK
+      - name: Build Debug APK
         run: ./gradlew assembleDebug
 
       - name: Upload APK
