@@ -1,4 +1,4 @@
-name: Inspect MMTJS Fresh Project
+name: Build MMTJS Android App
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,17 +25,27 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Extract Fresh MMTJS Project
+      - name: Extract MMTJS project
         run: |
           unzip -o MMTJS_Fresh_Project_With_Slip_Number.zip -d project
 
-      - name: Inspect extracted project
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Generate Gradle Wrapper
+        working-directory: project/MMTJS
+        run: gradle wrapper
+
+      - name: Build APK
+        working-directory: project/MMTJS
         run: |
-          echo "======================================"
-          echo "FILES INSIDE THE FRESH MMTJS PROJECT"
-          echo "======================================"
-          find project -maxdepth 6 -type f | sort
-          echo "======================================"
-          echo "DIRECTORIES"
-          echo "======================================"
-          find project -maxdepth 4 -type d | sort
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMTJS-debug-apk
+          path: project/MMTJS/app/build/outputs/apk/debug/app-debug.apk
