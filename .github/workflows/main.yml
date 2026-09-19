@@ -29,6 +29,11 @@ jobs:
         run: |
           unzip -o MMTJS_Fresh_Project_With_Slip_Number.zip -d project
 
+      - name: Copy latest school logo
+        run: |
+          mkdir -p project/MMTJS/app/src/main/res/drawable
+          cp mmtjs_logo.png project/MMTJS/app/src/main/res/drawable/mmtjs_logo.png
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
