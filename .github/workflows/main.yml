@@ -1,4 +1,4 @@
-name: Build MMTJS APK
+name: Build MMTJS Android App
 
 on:
   push:
@@ -11,14 +11,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '20'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -32,5 +32,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MMTJS-APK
+          name: MMTJS-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
