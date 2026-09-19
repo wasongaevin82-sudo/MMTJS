@@ -28,9 +28,6 @@ jobs:
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
           sdkmanager --version
 
           yes | sdkmanager --licenses || true
@@ -52,15 +49,10 @@ jobs:
             exit 1
           fi
 
-          echo "Using ZIP: $ZIP_FILE"
-
           rm -rf android_project
           mkdir android_project
 
           unzip -q "$ZIP_FILE" -d android_project
-
-          echo "Project files:"
-          find android_project -maxdepth 4 -type f | head -100
 
       - name: Find Android project
         shell: bash
@@ -77,11 +69,9 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Android project:"
-          echo "$PROJECT_DIR"
+          echo "Project: $PROJECT_DIR"
 
       - name: Find Android application module
         shell: bash
@@ -107,8 +97,53 @@ jobs:
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-          echo "Application module:"
-          echo "$APP_DIR"
+          echo "Application module: $APP_DIR"
+
+      - name: Fix Kotlin duplicate dependencies automatically
+        shell: bash
+        run: |
+          set -e
+
+          echo "Fixing Kotlin version conflict..."
+
+          cd "$PROJECT_DIR"
+
+          find . -type f \
+            \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+            -not -path "*/build/*" \
+            -print0 | while IFS= read -r -d '' file
+          do
+            echo "Checking $file"
+
+            # Remove old Kotlin JDK8 dependency if explicitly declared
+            sed -i \
+              -E '/kotlin-stdlib-jdk8:[0-9]+\.[0-9]+\.[0-9]+/d' \
+              "$file" || true
+
+            # Replace old Kotlin stdlib versions with 1.8.22
+            sed -i \
+              -E 's/kotlin-stdlib:[0-9]+\.[0-9]+\.[0-9]+/kotlin-stdlib:1.8.22/g' \
+              "$file" || true
+
+            sed -i \
+              -E 's/kotlin-stdlib-jdk8:[0-9]+\.[0-9]+\.[0-9]+/kotlin-stdlib-jdk8:1.8.22/g' \
+              "$file" || true
+          done
+
+          # Create a Gradle resolution rule so all Kotlin libraries
+          # use the same version.
+          cat > kotlin-resolution.gradle <<'EOF'
+          configurations.configureEach {
+              resolutionStrategy.eachDependency { details ->
+                  if (details.requested.group == "org.jetbrains.kotlin") {
+                      details.useVersion("1.8.22")
+                  }
+              }
+          }
+          EOF
+
+          echo ""
+          echo "Kotlin conflict fix prepared."
 
       - name: Add MMTJS logo automatically
         shell: bash
@@ -116,7 +151,9 @@ jobs:
           set -e
 
           LOGO=$(find . -maxdepth 3 -type f \
-            \( -iname "mmtjs_logo.png" -o -iname "*TERTTU*.png" -o -iname "*Terttu*.png" \) \
+            \( -iname "mmtjs_logo.png" \
+            -o -iname "*TERTTU*.png" \
+            -o -iname "*Terttu*.png" \) \
             -not -path "./android_project/*" \
             -print -quit)
 
@@ -125,15 +162,12 @@ jobs:
             exit 0
           fi
 
-          echo "Logo found:"
-          echo "$LOGO"
-
           mkdir -p "$APP_DIR/src/main/res/drawable"
 
           cp "$LOGO" \
             "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
 
-          echo "Logo installed automatically."
+          echo "MMTJS logo added successfully."
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
@@ -165,27 +199,13 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "        BUILD DIAGNOSIS"
+          echo "        BUILD RESULT"
           echo "=========================================="
 
-          echo ""
-          echo "FAILED TASK:"
-          grep -E "Execution failed for task" \
-            "$GITHUB_WORKSPACE/build.log" | tail -20 || true
-
-          echo ""
-          echo "WHAT WENT WRONG:"
-          grep -A 30 -B 5 \
-            "What went wrong:" \
-            "$GITHUB_WORKSPACE/build.log" | head -150 || true
-
-          echo ""
-          echo "RESOURCE / AAPT ERRORS:"
-          grep -Ei \
-            "AAPT|resource .* not found|duplicate|AndroidManifest|manifest merger|error:" \
+          grep -E \
+            "Execution failed for task|Duplicate class|What went wrong|BUILD FAILED|BUILD SUCCESSFUL" \
             "$GITHUB_WORKSPACE/build.log" | tail -100 || true
 
-          echo ""
           echo "=========================================="
 
           exit $RESULT
@@ -194,6 +214,7 @@ jobs:
         if: success()
         shell: bash
         run: |
+          echo "APK:"
           find "$PROJECT_DIR" \
             -type f -name "*.apk" -print
 
