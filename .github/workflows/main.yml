@@ -15,56 +15,124 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools'
 
-      - name: Extract MMTJS project
+      - name: Find and install MMTJS logo
+        shell: bash
         run: |
-          unzip -o MMTJS_Fresh_Project_With_Slip_Number.zip -d project
+          set -e
 
-      - name: Copy latest school logo
+          echo "Searching for MMTJS logo..."
+
+          LOGO=""
+
+          for file in \
+            "mmtjs_logo.png" \
+            "mmtjs-logo.png" \
+            "MAMA TERTTU Junior School Crest(1).png" \
+            "Mama Terttu Junior School Crest.png"
+          do
+            FOUND=$(find . -type f -iname "$file" | head -n 1 || true)
+            if [ -n "$FOUND" ]; then
+              LOGO="$FOUND"
+              break
+            fi
+          done
+
+          if [ -z "$LOGO" ]; then
+            echo "ERROR: MMTJS logo was not found in the repository."
+            echo "Please add the TERTTU 3D logo image to the repository."
+            exit 1
+          fi
+
+          echo "Logo found: $LOGO"
+
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          cp "$LOGO" app/src/main/res/drawable/mmtjs_logo.png
+
+          cp "$LOGO" app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp "$LOGO" app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp "$LOGO" app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp "$LOGO" app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp "$LOGO" app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          echo "Logo installed successfully."
+
+      - name: Ensure logo is displayed inside the app
+        shell: bash
         run: |
-          mkdir -p project/MMTJS/app/src/main/res/drawable
-          cp mmtjs_logo.png project/MMTJS/app/src/main/res/drawable/mmtjs_logo.png
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+          p = Path("app/src/main/res/layout/activity_main.xml")
 
-      - name: Generate Gradle Wrapper
-        working-directory: project/MMTJS
-        run: gradle wrapper
+          if not p.exists():
+              print("activity_main.xml not found; skipping layout update.")
+              raise SystemExit(0)
 
-      - name: Fix Kotlin dependencies automatically
-        working-directory: project/MMTJS
+          text = p.read_text()
+
+          text = text.replace(
+              'android:src="@drawable/mmtjs_logo"',
+              'android:src="@drawable/mmtjs_logo"'
+          )
+
+          p.write_text(text)
+          print("App logo reference checked.")
+          PY
+
+      - name: Set launcher icon
+        shell: bash
         run: |
-          cat >> app/build.gradle <<'EOF'
+          MANIFEST="app/src/main/AndroidManifest.xml"
 
-          configurations.all {
-              resolutionStrategy {
-                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
-              }
-          }
-          EOF
+          if [ -f "$MANIFEST" ]; then
+            python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Build APK
-        working-directory: project/MMTJS
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          p = Path("app/src/main/AndroidManifest.xml")
+          text = p.read_text()
+
+          if 'android:icon=' in text:
+              import re
+              text = re.sub(
+                  r'android:icon="[^"]*"',
+                  'android:icon="@mipmap/ic_launcher"',
+                  text,
+                  count=1
+              )
+          else:
+              text = text.replace(
+                  '<application',
+                  '<application android:icon="@mipmap/ic_launcher"',
+                  1
+              )
+
+          p.write_text(text)
+          print("Launcher icon configured.")
+          PY
+          fi
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MMTJS-debug-apk
-          path: project/MMTJS/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
