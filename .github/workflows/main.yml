@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -23,42 +22,47 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ''
 
-      - name: Extract project automatically
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
 
-          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1 || true)
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -1)
 
-          if [ -z "$ZIP" ]; then
-            echo "No ZIP found. Using repository directly."
-            mkdir -p android_project
-            cp -r . android_project/ 2>/dev/null || true
-          else
-            echo "Project ZIP: $ZIP"
-            rm -rf android_project
-            mkdir android_project
-            unzip -o "$ZIP" -d android_project
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found."
+            exit 1
           fi
 
-      - name: Locate Android project
+          echo "Using ZIP: $ZIP_FILE"
+
+          rm -rf android_project
+          mkdir android_project
+
+          unzip -q "$ZIP_FILE" -d android_project
+
+          echo ""
+          echo "Extracted files:"
+          find android_project -maxdepth 4 -type f | head -100
+
+      - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          SETTINGS=$(find android_project -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            | head -n 1 || true)
+          SETTINGS=$(find android_project \
+            -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: Android Gradle project was not found."
-
-            echo "Repository files:"
-            find . -maxdepth 6 -type f | sort | head -250
-
+            echo "ERROR: settings.gradle was not found."
             exit 1
           fi
 
@@ -66,206 +70,161 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+          echo ""
           echo "Android project found at:"
           echo "$PROJECT_DIR"
 
-      - name: Locate Android app module
+      - name: Find Android application module
         shell: bash
         run: |
           set -e
 
-          MANIFEST=$(find "$PROJECT_DIR" -type f \
-            -name "AndroidManifest.xml" | head -n 1 || true)
+          APP_BUILD=$(find "$PROJECT_DIR" \
+            -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+            -not -path "*/build/*" \
+            -print0 | while IFS= read -r -d '' file; do
+              if grep -q "com.android.application" "$file"; then
+                echo "$file"
+                break
+              fi
+            done)
 
-          if [ -z "$MANIFEST" ]; then
-            echo "ERROR: AndroidManifest.xml not found."
-
-            find "$PROJECT_DIR" -maxdepth 8 -type f | sort | head -300
-
+          if [ -z "$APP_BUILD" ]; then
+            echo "ERROR: Android application module was not found."
+            echo ""
+            echo "Build files found:"
+            find "$PROJECT_DIR" -type f \
+              \( -name "build.gradle" -o -name "build.gradle.kts" \)
             exit 1
           fi
 
-          MAIN_DIR=$(dirname "$MANIFEST")
-
-          APP_DIR=$(dirname "$(dirname "$MAIN_DIR")")
+          APP_DIR=$(dirname "$APP_BUILD")
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-          echo "Android app module:"
+          echo ""
+          echo "Application module:"
           echo "$APP_DIR"
 
-      - name: Install MMTJS logo automatically
+      - name: Add MMTJS logo automatically
         shell: bash
         run: |
           set -e
 
-          LOGO=$(find . -type f \
-            \( -iname "mmtjs_logo.png" \
-               -o -iname "mmtjs-logo.png" \) \
-            -not -path "./.git/*" \
-            | head -n 1 || true)
+          LOGO=$(find . -maxdepth 3 -type f \
+            \( -iname "mmtjs_logo.png" -o -iname "*TERTTU*.png" -o -iname "*Terttu*.png" \) \
+            -not -path "./android_project/*" \
+            -print -quit)
 
           if [ -z "$LOGO" ]; then
-            echo "ERROR: mmtjs_logo.png not found."
-            exit 1
-          fi
-
-          echo "Using logo:"
-          echo "$LOGO"
-
-          mkdir -p "$APP_DIR/src/main/res/drawable"
-
-          cp "$LOGO" \
-            "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
-
-          echo "Logo installed."
-
-      - name: Create launcher icon automatically
-        shell: bash
-        run: |
-          set -e
-
-          RES="$APP_DIR/src/main/res"
-
-          for D in \
-            mipmap-mdpi \
-            mipmap-hdpi \
-            mipmap-xhdpi \
-            mipmap-xxhdpi \
-            mipmap-xxxhdpi
-          do
-            mkdir -p "$RES/$D"
-
-            cp "$RES/drawable/mmtjs_logo.png" \
-              "$RES/$D/ic_launcher.png"
-          done
-
-          echo "Launcher icons created."
-
-      - name: Configure launcher icon
-        shell: bash
-        run: |
-          set -e
-
-          MANIFEST="$APP_DIR/src/main/AndroidManifest.xml"
-
-          if [ ! -f "$MANIFEST" ]; then
-            echo "Manifest not found at expected location."
+            echo "WARNING: MMTJS logo was not found in repository root."
             exit 0
           fi
 
-          python3 - "$MANIFEST" <<'PY'
-          from pathlib import Path
-          import re
-          import sys
+          echo "Logo found: $LOGO"
 
-          p = Path(sys.argv[1])
-          text = p.read_text()
+          mkdir -p "$APP_DIR/src/main/res/drawable"
 
-          if "android:icon=" in text:
-              text = re.sub(
-                  r'android:icon="[^"]*"',
-                  'android:icon="@mipmap/ic_launcher"',
-                  text,
-                  count=1
-              )
-          else:
-              text = text.replace(
-                  "<application",
-                  '<application android:icon="@mipmap/ic_launcher"',
-                  1
-              )
+          cp "$LOGO" "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
 
-          p.write_text(text)
+          echo ""
+          echo "Logo copied to:"
+          echo "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
 
-          print("Launcher icon configured.")
-          PY
+      - name: Check Android resources
+        shell: bash
+        run: |
+          echo "Android resources:"
+          find "$APP_DIR/src/main/res" -maxdepth 2 -type f 2>/dev/null | sort || true
+
+          echo ""
+          echo "Android manifest:"
+          find "$APP_DIR/src/main" -maxdepth 2 \
+            -type f -name "AndroidManifest.xml" -print || true
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Install required Android components
-        shell: bash
-        run: |
-          set +e
-
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            || true
-
-          echo "Android SDK preparation complete."
-
       - name: Clean project
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          gradle clean --stacktrace --console=plain || true
+          gradle clean --console=plain
 
-      - name: Build APK
+      - name: Build MMTJS APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set +e
 
+          echo "=========================================="
+          echo "        BUILDING MMTJS APK"
+          echo "=========================================="
+
           gradle assembleDebug \
-            --stacktrace \
             --console=plain \
-            2>&1 | tee build.log
+            --stacktrace \
+            --info \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
           RESULT=${PIPESTATUS[0]}
 
           echo ""
-          echo "========================================"
-          echo "BUILD RESULT: $RESULT"
-          echo "========================================"
+          echo "=========================================="
+          echo "        MMTJS BUILD DIAGNOSIS"
+          echo "=========================================="
 
-          if [ "$RESULT" -ne 0 ]; then
-            echo ""
-            echo "========== BUILD ERROR =========="
+          echo ""
+          echo "FAILED TASK:"
+          grep -E "Execution failed for task" \
+            "$GITHUB_WORKSPACE/build.log" | tail -20 || true
 
-            grep -A 25 -B 5 \
-              -E "What went wrong:|Execution failed for task|Caused by:" \
-              build.log | head -150 || true
+          echo ""
+          echo "WHAT WENT WRONG:"
+          grep -A 30 -B 5 \
+            "What went wrong:" \
+            "$GITHUB_WORKSPACE/build.log" | head -150 || true
 
-            echo ""
-            echo "========== LAST 80 LINES =========="
+          echo ""
+          echo "RESOURCE / AAPT ERRORS:"
+          grep -Ei \
+            "AAPT|resource .* not found|duplicate|AndroidManifest|manifest merger|error:" \
+            "$GITHUB_WORKSPACE/build.log" | tail -100 || true
 
-            tail -n 80 build.log
-          fi
+          echo ""
+          echo "CAUSE:"
+          grep -A 25 \
+            "^Caused by:" \
+            "$GITHUB_WORKSPACE/build.log" | head -120 || true
+
+          echo ""
+          echo "=========================================="
 
           exit $RESULT
 
-      - name: Find APK automatically
+      - name: Find APK
         if: success()
         shell: bash
         run: |
-          set -e
+          echo "APK files found:"
+          find "$PROJECT_DIR" \
+            -type f -name "*.apk" -print
 
-          APK=$(find "$PROJECT_DIR" \
-            -type f \
-            -name "*.apk" \
-            -path "*/build/outputs/*" \
-            | head -n 1 || true)
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not found."
-            exit 1
-          fi
-
-          echo "APK created:"
-          echo "$APK"
-
-          echo "APK=$APK" >> "$GITHUB_ENV"
-
-      - name: Upload MMTJS APK
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MMTJS-debug-apk
-          path: ${{ env.APK }}
+          path: |
+            ${{ env.PROJECT_DIR }}/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+      - name: Upload build diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMTJS-build-diagnostic
+          path: build.log
+          if-no-files-found: warn
