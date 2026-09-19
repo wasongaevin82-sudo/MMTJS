@@ -26,7 +26,7 @@ jobs:
         with:
           packages: ''
 
-      - name: Extract Android project
+      - name: Extract project automatically
         shell: bash
         run: |
           set -e
@@ -34,20 +34,17 @@ jobs:
           ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1 || true)
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: Project ZIP not found."
-            exit 1
+            echo "No ZIP found. Using repository directly."
+            mkdir -p android_project
+            cp -r . android_project/ 2>/dev/null || true
+          else
+            echo "Project ZIP: $ZIP"
+            rm -rf android_project
+            mkdir android_project
+            unzip -o "$ZIP" -d android_project
           fi
 
-          echo "Using ZIP: $ZIP"
-
-          rm -rf android_project
-          mkdir -p android_project
-
-          unzip -o "$ZIP" -d android_project
-
-          echo "Project extracted."
-
-      - name: Find Android project automatically
+      - name: Locate Android project
         shell: bash
         run: |
           set -e
@@ -57,31 +54,30 @@ jobs:
             | head -n 1 || true)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle was not found."
+            echo "ERROR: Android Gradle project was not found."
 
-            echo "Files found:"
-            find android_project -maxdepth 7 -type f | sort | head -200
+            echo "Repository files:"
+            find . -maxdepth 6 -type f | sort | head -250
 
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project found:"
-          echo "$PROJECT_DIR"
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Find Android app module
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+      - name: Locate Android app module
         shell: bash
         run: |
           set -e
 
-          APP_DIR=$(find "$PROJECT_DIR" -type f \
-            -name "AndroidManifest.xml" \
-            | head -n 1 | xargs -r dirname)
+          MANIFEST=$(find "$PROJECT_DIR" -type f \
+            -name "AndroidManifest.xml" | head -n 1 || true)
 
-          if [ -z "$APP_DIR" ]; then
+          if [ -z "$MANIFEST" ]; then
             echo "ERROR: AndroidManifest.xml not found."
 
             find "$PROJECT_DIR" -maxdepth 8 -type f | sort | head -300
@@ -89,29 +85,32 @@ jobs:
             exit 1
           fi
 
-          APP_DIR=$(dirname "$(dirname "$APP_DIR")")
+          MAIN_DIR=$(dirname "$MANIFEST")
+
+          APP_DIR=$(dirname "$(dirname "$MAIN_DIR")")
+
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
           echo "Android app module:"
           echo "$APP_DIR"
 
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-
-      - name: Install MMTJS logo
+      - name: Install MMTJS logo automatically
         shell: bash
         run: |
           set -e
 
           LOGO=$(find . -type f \
-            -name "mmtjs_logo.png" \
+            \( -iname "mmtjs_logo.png" \
+               -o -iname "mmtjs-logo.png" \) \
             -not -path "./.git/*" \
             | head -n 1 || true)
 
           if [ -z "$LOGO" ]; then
-            echo "ERROR: mmtjs_logo.png was not found."
+            echo "ERROR: mmtjs_logo.png not found."
             exit 1
           fi
 
-          echo "Logo found:"
+          echo "Using logo:"
           echo "$LOGO"
 
           mkdir -p "$APP_DIR/src/main/res/drawable"
@@ -119,30 +118,26 @@ jobs:
           cp "$LOGO" \
             "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
 
-          echo "Logo copied into app."
+          echo "Logo installed."
 
-      - name: Create launcher icon
+      - name: Create launcher icon automatically
         shell: bash
         run: |
           set -e
 
           RES="$APP_DIR/src/main/res"
 
-          mkdir -p "$RES/mipmap-mdpi"
-          mkdir -p "$RES/mipmap-hdpi"
-          mkdir -p "$RES/mipmap-xhdpi"
-          mkdir -p "$RES/mipmap-xxhdpi"
-          mkdir -p "$RES/mipmap-xxxhdpi"
-
-          for DIR in \
+          for D in \
             mipmap-mdpi \
             mipmap-hdpi \
             mipmap-xhdpi \
             mipmap-xxhdpi \
             mipmap-xxxhdpi
           do
+            mkdir -p "$RES/$D"
+
             cp "$RES/drawable/mmtjs_logo.png" \
-              "$RES/$DIR/ic_launcher.png"
+              "$RES/$D/ic_launcher.png"
           done
 
           echo "Launcher icons created."
@@ -155,8 +150,7 @@ jobs:
           MANIFEST="$APP_DIR/src/main/AndroidManifest.xml"
 
           if [ ! -f "$MANIFEST" ]; then
-            echo "WARNING: Manifest not found at:"
-            echo "$MANIFEST"
+            echo "Manifest not found at expected location."
             exit 0
           fi
 
@@ -165,8 +159,8 @@ jobs:
           import re
           import sys
 
-          manifest = Path(sys.argv[1])
-          text = manifest.read_text()
+          p = Path(sys.argv[1])
+          text = p.read_text()
 
           if "android:icon=" in text:
               text = re.sub(
@@ -182,7 +176,7 @@ jobs:
                   1
               )
 
-          manifest.write_text(text)
+          p.write_text(text)
 
           print("Launcher icon configured.")
           PY
@@ -192,57 +186,79 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Check Gradle
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Install required Android components
+        shell: bash
         run: |
-          gradle --version
+          set +e
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            || true
+
+          echo "Android SDK preparation complete."
+
+      - name: Clean project
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          gradle clean --stacktrace --console=plain || true
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          set -o pipefail
+          set +e
 
-          gradle assembleDebug --stacktrace --info 2>&1 | tee build.log
+          gradle assembleDebug \
+            --stacktrace \
+            --console=plain \
+            2>&1 | tee build.log
 
-      - name: Show actual build error
-        if: failure()
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          echo ""
-          echo "========================================"
-          echo "       ACTUAL BUILD ERROR"
-          echo "========================================"
-
-          grep -A 30 -B 10 \
-            -E "What went wrong|Caused by:|FAILURE:" \
-            build.log || true
+          RESULT=${PIPESTATUS[0]}
 
           echo ""
           echo "========================================"
-          echo "       LAST 100 LINES"
+          echo "BUILD RESULT: $RESULT"
           echo "========================================"
 
-          tail -n 100 build.log || true
+          if [ "$RESULT" -ne 0 ]; then
+            echo ""
+            echo "========== BUILD ERROR =========="
 
-      - name: Find APK
+            grep -A 25 -B 5 \
+              -E "What went wrong:|Execution failed for task|Caused by:" \
+              build.log | head -150 || true
+
+            echo ""
+            echo "========== LAST 80 LINES =========="
+
+            tail -n 80 build.log
+          fi
+
+          exit $RESULT
+
+      - name: Find APK automatically
         if: success()
         shell: bash
         run: |
           set -e
 
-          APK=$(find "$PROJECT_DIR" -type f \
+          APK=$(find "$PROJECT_DIR" \
+            -type f \
             -name "*.apk" \
             -path "*/build/outputs/*" \
             | head -n 1 || true)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not created."
+            echo "ERROR: APK not found."
             exit 1
           fi
 
-          echo "APK found:"
+          echo "APK created:"
           echo "$APK"
 
           echo "APK=$APK" >> "$GITHUB_ENV"
