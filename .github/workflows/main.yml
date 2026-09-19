@@ -1,4 +1,4 @@
-name: Build MMTJS Android App
+name: Inspect MMTJS Fresh Project
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,27 +25,17 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Extract MMTJS project
+      - name: Extract Fresh MMTJS Project
         run: |
           unzip -o MMTJS_Fresh_Project_With_Slip_Number.zip -d project
-          echo "Project extracted."
-          find project -name gradlew -type f
 
-      - name: Build APK
+      - name: Inspect extracted project
         run: |
-          GRADLEW=$(find project -name gradlew -type f | head -n 1)
-          PROJECT_DIR=$(dirname "$GRADLEW")
-          echo "Project directory: $PROJECT_DIR"
-          chmod +x "$GRADLEW"
-          cd "$PROJECT_DIR"
-          ./gradlew assembleDebug
-
-      - name: Find APK
-        run: |
-          find project -name "*.apk" -type f
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MMTJS-debug-apk
-          path: project/**/app/build/outputs/apk/debug/app-debug.apk
+          echo "======================================"
+          echo "FILES INSIDE THE FRESH MMTJS PROJECT"
+          echo "======================================"
+          find project -maxdepth 6 -type f | sort
+          echo "======================================"
+          echo "DIRECTORIES"
+          echo "======================================"
+          find project -maxdepth 4 -type d | sort
