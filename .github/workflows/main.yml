@@ -20,68 +20,81 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
-
-      - name: Find Android project automatically
+      - name: Extract Android project automatically
         shell: bash
         run: |
           set -e
 
-          MANIFEST=$(find . -type f -name "AndroidManifest.xml" \
-            -not -path "./.git/*" | head -n 1 || true)
+          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
 
-          if [ -z "$MANIFEST" ]; then
-            echo "ERROR: No AndroidManifest.xml found."
-            echo "Repository contents:"
-            find . -maxdepth 5 -type f | sort | head -200
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Android project ZIP not found."
             exit 1
           fi
 
-          echo "AndroidManifest found:"
-          echo "$MANIFEST"
+          echo "Found project:"
+          echo "$ZIP"
 
-          ANDROID_DIR=$(dirname "$(dirname "$MANIFEST")")
-          echo "Android module:"
-          echo "$ANDROID_DIR"
+          mkdir -p android_project
 
-          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+          unzip -o "$ZIP" -d android_project
 
-      - name: Install MMTJS TERTTU logo automatically
+          echo "Extracted project:"
+          find android_project -maxdepth 5 -type f | head -100
+
+      - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          LOGO=$(find . -type f \( \
-            -iname "mmtjs_logo.png" -o \
-            -iname "mmtjs-logo.png" -o \
-            -iname "MAMA TERTTU Junior School Crest(1).png" -o \
-            -iname "Mama Terttu Junior School Crest.png" \
-          \) -not -path "./.git/*" | head -n 1 || true)
+          MANIFEST=$(find android_project -type f \
+            -name "AndroidManifest.xml" | head -n 1 || true)
+
+          if [ -z "$MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml was not found after extraction."
+            exit 1
+          fi
+
+          echo "Manifest found:"
+          echo "$MANIFEST"
+
+          PROJECT_DIR=$(dirname "$(dirname "$(dirname "$MANIFEST")")")
+
+          echo "Android project directory:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Install MMTJS logo automatically
+        shell: bash
+        run: |
+          set -e
+
+          LOGO=$(find . -type f -name "mmtjs_logo.png" \
+            -not -path "./.git/*" \
+            | head -n 1)
 
           if [ -z "$LOGO" ]; then
-            echo "ERROR: The MAMA TERTTU 3D logo was not found in the repository."
-            echo "The logo must exist somewhere in the repository for the workflow to copy it."
+            echo "ERROR: mmtjs_logo.png was not found."
             exit 1
           fi
 
           echo "Logo found:"
           echo "$LOGO"
 
-          mkdir -p "$ANDROID_DIR/src/main/res/drawable"
+          mkdir -p "$PROJECT_DIR/src/main/res/drawable"
 
-          cp "$LOGO" "$ANDROID_DIR/src/main/res/drawable/mmtjs_logo.png"
+          cp "$LOGO" \
+             "$PROJECT_DIR/src/main/res/drawable/mmtjs_logo.png"
 
           echo "Logo installed inside Android app."
 
-      - name: Configure launcher icon automatically
+      - name: Configure app launcher icon
         shell: bash
         run: |
           set -e
 
-          RES="$ANDROID_DIR/src/main/res"
+          RES="$PROJECT_DIR/src/main/res"
 
           mkdir -p "$RES/mipmap-mdpi"
           mkdir -p "$RES/mipmap-hdpi"
@@ -89,25 +102,29 @@ jobs:
           mkdir -p "$RES/mipmap-xxhdpi"
           mkdir -p "$RES/mipmap-xxxhdpi"
 
-          for DIR in \
-            mipmap-mdpi \
-            mipmap-hdpi \
-            mipmap-xhdpi \
-            mipmap-xxhdpi \
-            mipmap-xxxhdpi
-          do
-            cp "$RES/drawable/mmtjs_logo.png" \
-               "$RES/$DIR/ic_launcher.png"
-          done
+          cp "$RES/drawable/mmtjs_logo.png" \
+             "$RES/mipmap-mdpi/ic_launcher.png"
 
-          echo "Launcher icon files created."
+          cp "$RES/drawable/mmtjs_logo.png" \
+             "$RES/mipmap-hdpi/ic_launcher.png"
 
-      - name: Configure AndroidManifest automatically
+          cp "$RES/drawable/mmtjs_logo.png" \
+             "$RES/mipmap-xhdpi/ic_launcher.png"
+
+          cp "$RES/drawable/mmtjs_logo.png" \
+             "$RES/mipmap-xxhdpi/ic_launcher.png"
+
+          cp "$RES/drawable/mmtjs_logo.png" \
+             "$RES/mipmap-xxxhdpi/ic_launcher.png"
+
+          echo "Launcher icon created."
+
+      - name: Configure AndroidManifest
         shell: bash
         run: |
           set -e
 
-          MANIFEST=$(find "$ANDROID_DIR" -type f \
+          MANIFEST=$(find "$PROJECT_DIR" -type f \
             -name "AndroidManifest.xml" | head -n 1)
 
           python3 - "$MANIFEST" <<'PY'
@@ -118,7 +135,7 @@ jobs:
           manifest = Path(sys.argv[1])
           text = manifest.read_text()
 
-          if 'android:icon=' in text:
+          if "android:icon=" in text:
               text = re.sub(
                   r'android:icon="[^"]*"',
                   'android:icon="@mipmap/ic_launcher"',
@@ -127,46 +144,43 @@ jobs:
               )
           else:
               text = text.replace(
-                  '<application',
+                  "<application",
                   '<application android:icon="@mipmap/ic_launcher"',
                   1
               )
 
           manifest.write_text(text)
 
-          print("Launcher icon configured:")
-          print("@mipmap/ic_launcher")
+          print("Launcher icon configured successfully.")
           PY
 
-      - name: Find Gradle wrapper automatically
+      - name: Find Gradle wrapper
         shell: bash
         run: |
           set -e
 
-          GRADLE=$(find . -type f -name "gradlew" \
-            -not -path "./.git/*" | head -n 1 || true)
+          GRADLE=$(find "$PROJECT_DIR" -type f \
+            -name "gradlew" | head -n 1)
 
           if [ -z "$GRADLE" ]; then
             echo "ERROR: gradlew was not found."
             exit 1
           fi
 
-          echo "Gradle wrapper:"
-          echo "$GRADLE"
-
           chmod +x "$GRADLE"
 
-          echo "GRADLE_WRAPPER=$GRADLE" >> "$GITHUB_ENV"
+          echo "GRADLE=$GRADLE" >> "$GITHUB_ENV"
 
-      - name: Build APK automatically
+      - name: Build APK
         run: |
-          "$GRADLE_WRAPPER" assembleDebug
+          "$GRADLE" assembleDebug
 
-      - name: Find APK automatically
+      - name: Find APK
         shell: bash
         run: |
-          APK=$(find . -type f -name "*.apk" \
-            -path "*/build/outputs/*" | head -n 1 || true)
+          APK=$(find "$PROJECT_DIR" -type f \
+            -name "*.apk" \
+            -path "*/build/outputs/*" | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not created."
@@ -178,7 +192,7 @@ jobs:
 
           echo "APK=$APK" >> "$GITHUB_ENV"
 
-      - name: Upload MMTJS APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MMTJS-debug-apk
