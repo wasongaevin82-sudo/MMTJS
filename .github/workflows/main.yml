@@ -28,6 +28,8 @@ jobs:
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
+          echo "Android SDK: $ANDROID_SDK_ROOT"
+
           sdkmanager --version
 
           yes | sdkmanager --licenses || true
@@ -45,12 +47,14 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: No Android project ZIP found."
             exit 1
           fi
 
+          echo "Using: $ZIP_FILE"
+
           rm -rf android_project
-          mkdir android_project
+          mkdir -p android_project
 
           unzip -q "$ZIP_FILE" -d android_project
 
@@ -60,18 +64,21 @@ jobs:
           set -e
 
           SETTINGS=$(find android_project \
-            -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle was not found."
+            echo "ERROR: settings.gradle not found."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project: $PROJECT_DIR"
+          echo "Android project:"
+          echo "$PROJECT_DIR"
 
       - name: Find Android application module
         shell: bash
@@ -79,17 +86,19 @@ jobs:
           set -e
 
           APP_BUILD=$(find "$PROJECT_DIR" \
-            -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+            -type f \
+            \( -name "build.gradle" -o -name "build.gradle.kts" \) \
             -not -path "*/build/*" \
-            -print0 | while IFS= read -r -d '' file; do
-              if grep -q "com.android.application" "$file"; then
-                echo "$file"
-                break
-              fi
-            done)
+            -print0 | while IFS= read -r -d '' file
+          do
+            if grep -q "com.android.application" "$file"; then
+              echo "$file"
+              break
+            fi
+          done)
 
           if [ -z "$APP_BUILD" ]; then
-            echo "ERROR: Android application module was not found."
+            echo "ERROR: Android application module not found."
             exit 1
           fi
 
@@ -97,53 +106,43 @@ jobs:
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-          echo "Application module: $APP_DIR"
+          echo "Application module:"
+          echo "$APP_DIR"
 
-      - name: Fix Kotlin duplicate dependencies automatically
+      - name: Fix Kotlin duplicate classes
         shell: bash
         run: |
           set -e
 
-          echo "Fixing Kotlin version conflict..."
+          echo "=========================================="
+          echo " FIXING KOTLIN DEPENDENCY CONFLICT"
+          echo "=========================================="
 
-          cd "$PROJECT_DIR"
+          mkdir -p "$HOME/.gradle/init.d"
 
-          find . -type f \
-            \( -name "build.gradle" -o -name "build.gradle.kts" \) \
-            -not -path "*/build/*" \
-            -print0 | while IFS= read -r -d '' file
-          do
-            echo "Checking $file"
+          cat > "$HOME/.gradle/init.d/mmtjs-kotlin-fix.gradle" <<'EOF'
+          allprojects {
+              configurations.configureEach {
 
-            # Remove old Kotlin JDK8 dependency if explicitly declared
-            sed -i \
-              -E '/kotlin-stdlib-jdk8:[0-9]+\.[0-9]+\.[0-9]+/d' \
-              "$file" || true
+                  exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
 
-            # Replace old Kotlin stdlib versions with 1.8.22
-            sed -i \
-              -E 's/kotlin-stdlib:[0-9]+\.[0-9]+\.[0-9]+/kotlin-stdlib:1.8.22/g' \
-              "$file" || true
+                  exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
 
-            sed -i \
-              -E 's/kotlin-stdlib-jdk8:[0-9]+\.[0-9]+\.[0-9]+/kotlin-stdlib-jdk8:1.8.22/g' \
-              "$file" || true
-          done
-
-          # Create a Gradle resolution rule so all Kotlin libraries
-          # use the same version.
-          cat > kotlin-resolution.gradle <<'EOF'
-          configurations.configureEach {
-              resolutionStrategy.eachDependency { details ->
-                  if (details.requested.group == "org.jetbrains.kotlin") {
-                      details.useVersion("1.8.22")
+                  resolutionStrategy {
+                      force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
                   }
               }
           }
           EOF
 
           echo ""
-          echo "Kotlin conflict fix prepared."
+          echo "Removed:"
+          echo "  kotlin-stdlib-jdk7"
+          echo "  kotlin-stdlib-jdk8"
+          echo ""
+          echo "Using:"
+          echo "  kotlin-stdlib:1.8.22"
+          echo "=========================================="
 
       - name: Add MMTJS logo automatically
         shell: bash
@@ -159,15 +158,16 @@ jobs:
 
           if [ -z "$LOGO" ]; then
             echo "WARNING: MMTJS logo not found."
-            exit 0
+          else
+            echo "Logo found: $LOGO"
+
+            mkdir -p "$APP_DIR/src/main/res/drawable"
+
+            cp "$LOGO" \
+              "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
+
+            echo "MMTJS logo added successfully."
           fi
-
-          mkdir -p "$APP_DIR/src/main/res/drawable"
-
-          cp "$LOGO" \
-            "$APP_DIR/src/main/res/drawable/mmtjs_logo.png"
-
-          echo "MMTJS logo added successfully."
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
@@ -199,13 +199,27 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "        BUILD RESULT"
+          echo "        BUILD DIAGNOSIS"
           echo "=========================================="
 
+          echo ""
+          echo "FAILED TASK:"
+          grep -E "Execution failed for task" \
+            "$GITHUB_WORKSPACE/build.log" | tail -20 || true
+
+          echo ""
+          echo "KOTLIN ERRORS:"
           grep -E \
-            "Execution failed for task|Duplicate class|What went wrong|BUILD FAILED|BUILD SUCCESSFUL" \
+            "Duplicate class|kotlin-stdlib|kotlin-stdlib-jdk7|kotlin-stdlib-jdk8" \
             "$GITHUB_WORKSPACE/build.log" | tail -100 || true
 
+          echo ""
+          echo "OTHER ERRORS:"
+          grep -Ei \
+            "AAPT|resource .* not found|AndroidManifest|manifest merger|error:" \
+            "$GITHUB_WORKSPACE/build.log" | tail -100 || true
+
+          echo ""
           echo "=========================================="
 
           exit $RESULT
@@ -214,9 +228,14 @@ jobs:
         if: success()
         shell: bash
         run: |
-          echo "APK:"
+          echo "=========================================="
+          echo "APK CREATED"
+          echo "=========================================="
+
           find "$PROJECT_DIR" \
-            -type f -name "*.apk" -print
+            -type f \
+            -name "*.apk" \
+            -print
 
       - name: Upload APK
         if: success()
