@@ -1,6 +1,6 @@
 name: Build MMTJS Android App
 
-"on":
+on:
   push:
     branches:
       - main
@@ -23,89 +23,89 @@ jobs:
       - name: Find Android SDK
         shell: bash
         run: |
-          SDKMANAGER=$(find "$ANDROID_HOME" -type f -name sdkmanager 2>/dev/null | head -n 1)
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -20
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -1)
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found."
+            echo "ERROR: sdkmanager not found"
             exit 1
           fi
 
-          echo "Found sdkmanager:"
-          echo "$SDKMANAGER"
-
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-      - name: Install Android SDK
-        shell: bash
-        run: |
           yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Extract MMTJS project
+      - name: Extract complete MMTJS project
         shell: bash
         run: |
+          ZIP="MMTJS_Complete_Corrected_Project_v2.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: $ZIP was not found."
+            echo "Files in repository:"
+            ls -la
+            exit 1
+          fi
+
+          rm -rf _mmtjs_project
           mkdir -p _mmtjs_project
 
-          unzip -q MMTJS_Fixed_Crash_Project.zip -d _mmtjs_project
+          unzip -o "$ZIP" -d _mmtjs_project
 
-          PROJECT_DIR=$(find _mmtjs_project -type f -name settings.gradle -print -quit)
+          echo "Searching for Android project..."
+          SETTINGS=$(find _mmtjs_project -name settings.gradle -o -name settings.gradle.kts | head -1)
 
-          if [ -z "$PROJECT_DIR" ]; then
+          if [ -z "$SETTINGS" ]; then
             echo "ERROR: settings.gradle was not found."
+            find _mmtjs_project -maxdepth 5 -type f | sort
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT_DIR")
-
-          echo "MMTJS project found at:"
-          echo "$PROJECT_DIR"
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
 
       - name: Install Gradle 8.7
         shell: bash
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
-
           unzip -q gradle-8.7-bin.zip
-
-          echo "$GITHUB_WORKSPACE/gradle-8.7/bin" >> "$GITHUB_PATH"
-
-          gradle --version
+          echo "$PWD/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       - name: Build MMTJS APK
         shell: bash
         run: |
           cd "$PROJECT_DIR"
 
+          echo "=========================================="
+          echo "        BUILDING COMPLETE MMTJS APK"
+          echo "=========================================="
+
           gradle clean assembleDebug --stacktrace
 
       - name: Find APK
         shell: bash
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/artifact"
-
-          APK=$(find "$PROJECT_DIR" \
-            -type f \
-            -path "*/app/build/outputs/apk/debug/app-debug.apk" \
-            -print -quit)
+          APK=$(find "$PROJECT_DIR" -type f -name "*.apk" | head -1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not created."
             exit 1
           fi
 
-          echo "APK successfully created:"
+          echo "APK found:"
           echo "$APK"
 
-          cp "$APK" "$GITHUB_WORKSPACE/artifact/MMTJS-Fixed-APK.apk"
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$APK" "$GITHUB_WORKSPACE/output/MMTJS-Complete-Corrected.apk"
 
       - name: Upload MMTJS APK
         uses: actions/upload-artifact@v4
         with:
-          name: MMTJS-Fixed-APK
-          path: artifact/MMTJS-Fixed-APK.apk
+          name: MMTJS-Complete-Corrected-APK
+          path: output/MMTJS-Complete-Corrected.apk
