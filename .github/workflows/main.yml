@@ -20,8 +20,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Make Gradle executable
         run: chmod +x gradlew
@@ -29,10 +31,10 @@ jobs:
       - name: Clean project
         run: ./gradlew clean
 
-      - name: Build Debug APK
+      - name: Build MMTJS APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload MMTJS APK
         uses: actions/upload-artifact@v4
         with:
           name: MMTJS-Fixed-APK
