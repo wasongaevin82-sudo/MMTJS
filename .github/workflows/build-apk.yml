@@ -6,9 +6,11 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Build MMTJS APK
     runs-on: ubuntu-latest
 
     steps:
@@ -20,110 +22,158 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Check Java
-        run: java -version
-
-      - name: Install Android SDK
+      - name: Find and extract MMTJS project
         shell: bash
         run: |
-          SDKMANAGER=$(find "$ANDROID_HOME" -type f -name sdkmanager | head -n 1)
+          set -e
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found"
+          echo "=========================================="
+          echo "      SEARCHING FOR MMTJS PROJECT"
+          echo "=========================================="
+
+          echo "Files in repository:"
+          find . -maxdepth 4 -type f | sort
+
+          mkdir -p _mmtjs_project
+
+          # If a Gradle project already exists, use it.
+          SETTINGS=$(find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
+
+          if [ -n "$SETTINGS" ]; then
+            echo "Existing Android project found:"
+            echo "$SETTINGS"
+
+            PROJECT_DIR=$(dirname "$SETTINGS")
+            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+            exit 0
+          fi
+
+          # Otherwise look for the MMTJS ZIP.
+          ZIP=$(find . -type f -iname "*MMTJS*.zip" | head -n 1 || true)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No Gradle project and no MMTJS ZIP was found."
+            echo ""
+            echo "The repository must contain either:"
+            echo "  settings.gradle"
+            echo "or an MMTJS project ZIP."
             exit 1
           fi
 
-          yes | "$SDKMANAGER" --licenses || true
+          echo "MMTJS ZIP found:"
+          echo "$ZIP"
 
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          unzip -o "$ZIP" -d _mmtjs_project
 
-      - name: Install Gradle 8.9
-        shell: bash
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
-          unzip -q gradle-8.9-bin.zip
-          echo "$PWD/gradle-8.9/bin" >> "$GITHUB_PATH"
+          echo "Searching extracted project..."
 
-      - name: Find Android project
-        shell: bash
-        run: |
-          SETTINGS=$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1)
+          SETTINGS=$(find _mmtjs_project -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle was not found."
-            echo "The Android project is not in the repository root."
+            echo "ERROR: settings.gradle was not found inside the ZIP."
+            echo ""
+            echo "Extracted files:"
+            find _mmtjs_project -maxdepth 6 -type f | sort
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project:"
+          echo "Android project found at:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Verify project
+      - name: Check complete MMTJS project
         shell: bash
         run: |
-          cd "$PROJECT_DIR"
+          set -e
 
-          echo "Project contents:"
-          find . -maxdepth 4 -type f | sort
+          echo "=========================================="
+          echo "        MMTJS PROJECT DETAILS"
+          echo "=========================================="
+          echo "School: Mama Terttu Junior School"
+          echo "App: MMTJS"
+          echo "Slogan: it can be done"
+          echo ""
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+          echo ""
+          echo "Project files:"
+          find "$PROJECT_DIR" -maxdepth 5 -type f | sort
 
-          if [ ! -d "app" ]; then
-            echo "ERROR: app folder not found."
+      - name: Check Gradle wrapper
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "$PROJECT_DIR/gradlew" ]; then
+            echo "ERROR: gradlew was not found."
+            echo ""
+            echo "The Android project exists, but its Gradle wrapper is missing."
             exit 1
           fi
 
-          if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
-            echo "ERROR: AndroidManifest.xml not found."
-            exit 1
-          fi
+          chmod +x "$PROJECT_DIR/gradlew"
+
+      - name: Check Android resources and logo
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "        CHECKING MMTJS RESOURCES"
+          echo "=========================================="
+
+          find "$PROJECT_DIR" -type f -name "AndroidManifest.xml" -print
+          find "$PROJECT_DIR" -type f -name "mmtjs_logo.png" -print
+          find "$PROJECT_DIR" -type f -name "*.java" -print
+          find "$PROJECT_DIR" -type f -name "*.kt" -print
 
       - name: Build MMTJS APK
         shell: bash
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
 
-          gradle clean assembleDebug \
-            --stacktrace \
-            --no-daemon
+          echo "=========================================="
+          echo "        BUILDING MMTJS APK"
+          echo "=========================================="
 
-      - name: Find APK
+          ./gradlew clean assembleDebug --stacktrace
+
+      - name: Find generated APK
         shell: bash
         run: |
-          APK=$(find "$PROJECT_DIR" \
-            -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            | head -n 1)
+          echo "=========================================="
+          echo "        GENERATED APK"
+          echo "=========================================="
+
+          find "$PROJECT_DIR" -type f -name "*.apk" -print
+
+      - name: Prepare final APK
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find "$PROJECT_DIR" -type f -name "*-debug.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
+          mkdir -p release
+          cp "$APK" release/MMTJS_Android_App.apk
 
-          mkdir -p "$GITHUB_WORKSPACE/apk-output"
+          echo "Final APK:"
+          ls -lh release/MMTJS_Android_App.apk
 
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/apk-output/MMTJS-debug.apk"
-
-      - name: Upload APK
+      - name: Upload MMTJS APK
         uses: actions/upload-artifact@v4
         with:
-          name: MMTJS-APK
-          path: apk-output/MMTJS-debug.apk
+          name: MMTJS-Android-App
+          path: release/MMTJS_Android_App.apk
           if-no-files-found: error
-
-      - name: Build complete
-        run: |
-          echo "=========================================="
-          echo "MMTJS APK BUILD COMPLETE"
-          echo "=========================================="
-          ls -lh apk-output/MMTJS-debug.apk
